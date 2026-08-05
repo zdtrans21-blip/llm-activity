@@ -1,0 +1,24 @@
+{
+  "name": "llm-activity",
+  "version": "1.0.0",
+  "description": "Bitrix24 бизнес-процесс активити для анализа документов через LLM",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "install-activity": "node install.js"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.53",
+    "sharp": "^0.33.5",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "mammoth": "^1.6.0",
+    "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "3.11.174",
+    "xlsx": "^0.18.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
