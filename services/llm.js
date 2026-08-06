@@ -41,6 +41,51 @@ async function getGigachatToken(authKey) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Загрузить изображение в GigaChat Files API и вернуть file_id.
+ * GigaChat не принимает inline base64 в image_url — только через files endpoint.
+ */
+async function uploadGigachatFile(imageBase64, mimeType, bearerToken) {
+  const imageBuffer = Buffer.from(imageBase64, 'base64');
+  console.log(`[llm] GigaChat: загружаю изображение, размер=${imageBuffer.length} байт, тип=${mimeType}`);
+
+  // Используем form-data совместимый с axios через Buffer напрямую
+  // (Node.js 18 FormData+Blob может некорректно формировать multipart в axios)
+  const isPdf = mimeType === 'application/pdf';
+  const filename = isPdf ? 'document.pdf' : 'image.png';
+  const boundary = `----GCBoundary${Date.now()}`;
+  const CRLF = '\r\n';
+  const parts = [];
+
+  // Поле file
+  parts.push(
+    `--${boundary}${CRLF}` +
+    `Content-Disposition: form-data; name="file"; filename="${filename}"${CRLF}` +
+    `Content-Type: ${mimeType}${CRLF}${CRLF}`
+  );
+  const bodyHeader = Buffer.concat(parts.map(p => Buffer.from(p, 'utf8')));
+  const bodyFooter = Buffer.from(
+    `${CRLF}--${boundary}${CRLF}` +
+    `Content-Disposition: form-data; name="purpose"${CRLF}${CRLF}` +
+    `general${CRLF}` +
+    `--${boundary}--${CRLF}`,
+    'utf8'
+  );
+  const body = Buffer.concat([bodyHeader, imageBuffer, bodyFooter]);
+
+  const response = await axios.post('https://api.giga.chat/v1/files', body, {
+    headers: {
+      'Authorization': `Bearer ${bearerToken}`,
+      'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      'Content-Length': body.length
+    },
+    httpsAgent: gigachatSslAgent,
+    timeout: 30000
+  });
+  console.log(`[llm] GigaChat: файл загружен: id=${response.data.id}, bytes=${response.data.bytes ?? '?'}, filename=${response.data.filename ?? '?'}`);
+  return response.data.id;
+}
+
+/**
  * Вырезать блоки рассуждений thinking-моделей из ответа.
  * Модели типа gpt-5.5-thinking вставляют цепочку мыслей в теги <think>...</think>
  * прямо в content — инструкции в промте они игнорируют по архитектурным причинам.
@@ -97,36 +142,44 @@ async function callOpenAICompatible(params) {
 
   const authHeaders = buildAuthHeaders('openai', credentialUser, effectiveKey);
 
-  // Формируем user content
-  let userContent;
-  if (images && images.length > 0) {
-    // Vision: смешанный контент (текст + изображения)
-    userContent = [
-      { type: 'text', text: userMessage }
+  // Формируем messages
+  let messages;
+  if (provider === 'gigachat' && images && images.length > 0) {
+    // GigaChat: изображения передаются через files API + attachments в сообщении
+    // Загружаем все изображения и получаем file_id
+    const fileIds = [];
+    for (const img of images) {
+      if (!img.base64) continue;
+      const fileId = await uploadGigachatFile(img.base64, img.mimeType, effectiveKey);
+      fileIds.push(fileId);
+    }
+    messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userMessage, attachments: fileIds }
     ];
+  } else if (images && images.length > 0) {
+    // OpenAI Vision: inline base64 в image_url
+    const userContent = [{ type: 'text', text: userMessage }];
     images.forEach((img, idx) => {
-      if (!img.base64) return; // пропускаем страницы с ошибкой конвертации
+      if (!img.base64) return;
       userContent.push({ type: 'text', text: `=== ${img.filename || `Изображение ${idx + 1}`} ===` });
       userContent.push({
         type: 'image_url',
-        image_url: {
-          url: `data:${img.mimeType};base64,${img.base64}`,
-          detail: 'high'  // высокое качество (low/high/auto — стандарт OpenAI)
-        }
+        image_url: { url: `data:${img.mimeType};base64,${img.base64}`, detail: 'high' }
       });
     });
-  } else {
-    userContent = userMessage;
-  }
-
-  const requestBody = {
-    model,
-    messages: [
+    messages = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userContent }
-    ],
-    max_tokens: 4096
-  };
+    ];
+  } else {
+    messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userMessage }
+    ];
+  }
+
+  const requestBody = { model, messages, max_tokens: 4096 };
 
   console.log(`[llm] Отправка запроса к OpenAI-совместимому API: ${apiUrl}, модель: ${model}`);
 

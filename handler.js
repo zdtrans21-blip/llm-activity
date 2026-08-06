@@ -256,15 +256,25 @@ async function process(body) {
           images.push({ filename: fileData.filename, base64: extracted.base64, mimeType: extracted.mimeType });
           console.log(`[handler] Изображение подготовлено: ${fileData.filename}`);
         } else if (extracted.images && extracted.images.length) {
-          // Сканированный PDF без текстового слоя — отрендерен в страницы-картинки
-          for (const pageImg of extracted.images) {
+          // Сканированный PDF без текстового слоя
+          // GigaChat лучше читает оригинальный PDF напрямую, чем конвертированный PNG
+          if (provider === 'gigachat' && fileData.contentType && fileData.contentType.includes('pdf')) {
             images.push({
-              filename: `${fileData.filename} (стр. ${pageImg.page})`,
-              base64: pageImg.base64,
-              mimeType: pageImg.mimeType
+              filename: fileData.filename,
+              base64: fileData.buffer.toString('base64'),
+              mimeType: 'application/pdf'
             });
+            console.log(`[handler] GigaChat: передаём оригинальный PDF "${fileData.filename}" (${fileData.buffer.length} байт)`);
+          } else {
+            for (const pageImg of extracted.images) {
+              images.push({
+                filename: `${fileData.filename} (стр. ${pageImg.page})`,
+                base64: pageImg.base64,
+                mimeType: pageImg.mimeType
+              });
+            }
+            console.log(`[handler] PDF "${fileData.filename}" передан как ${extracted.images.length} изображени(й) (Vision)`);
           }
-          console.log(`[handler] PDF "${fileData.filename}" передан как ${extracted.images.length} изображени(й) (Vision)`);
           if (extracted.text && extracted.text.trim()) {
             documents.push({ filename: fileData.filename, text: extracted.text });
           }
