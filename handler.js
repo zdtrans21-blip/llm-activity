@@ -35,6 +35,40 @@ function extractScore(llmResult) {
   return { score: Number.isFinite(score) ? score : 0, cleanText };
 }
 
+// Скрытая инструкция про поэтапную разметку пунктов — та же идея, что
+// SCORE_INSTRUCTION, но по каждому отдельному пункту/замечанию, а не по
+// ответу целиком. Структура ответа не фиксирована (зависит от системного
+// промта пользователя), поэтому просим LLM саму размечать то, что она и так
+// перечисляет построчно.
+const ITEM_MARKER_INSTRUCTION = '\n\n---\nЕсли задание выше предполагает перечисление отдельных пунктов проверки, ' +
+  'замечаний, расхождений или ошибок — оформи каждый такой пункт отдельной строкой и в начале строки поставь ' +
+  'один из трёх маркеров строго в двойных квадратных скобках: [[OK]] — пункт в порядке, замечаний нет; ' +
+  '[[WARN]] — незначительное, некритичное замечание; [[ERROR]] — критическая ошибка или существенное расхождение. ' +
+  'Если задание не предполагает разбивку на отдельные пункты (например, просят просто написать резюме или ответить ' +
+  'одним предложением) — маркеры не используй вообще.';
+
+const SEVERITY_EMOJI = { OK: '✅', WARN: '🟡', ERROR: '🛑' };
+const SEVERITY_LINE_RE = /^[ \t]*\[\[\s*(OK|WARN|ERROR)\s*\]\][ \t]*(.*)$/;
+
+/**
+ * Заменяет маркеры [[OK]]/[[WARN]]/[[ERROR]] в начале строк на эмодзи и
+ * отдельно собирает строки с замечаниями/ошибками (WARN и ERROR) — для
+ * вывода в отдельную переменную БП.
+ */
+function applySeverityMarkers(text) {
+  if (!text) return { formattedText: text || '', issues: [] };
+  const issues = [];
+  const lines = text.split('\n').map((line) => {
+    const m = line.match(SEVERITY_LINE_RE);
+    if (!m) return line;
+    const [, level, rest] = m;
+    const formatted = `${SEVERITY_EMOJI[level]} ${rest}`.trimEnd();
+    if (level === 'WARN' || level === 'ERROR') issues.push(formatted);
+    return formatted;
+  });
+  return { formattedText: lines.join('\n'), issues };
+}
+
 /**
  * Парсить document_id из формата Битрикс24
  * Примеры: ["LISTS", "73", "73"], ["CRM", "DEAL", "12"], ["bizproc", "0", "XXX"]
@@ -179,7 +213,7 @@ async function process(body) {
       try {
         await bitrix.completeBizprocActivity(
           eventToken,
-          { llm_result: '', llm_status: 'error', llm_error_message: errorMessage, llm_score: 0 },
+          { llm_result: '', llm_status: 'error', llm_error_message: errorMessage, llm_score: 0, llm_issues: `🛑 ${errorMessage}` },
           '',
           accessToken,
           restEndpoint
@@ -305,14 +339,17 @@ async function process(body) {
       model,
       credentialUser,
       credentialKey,
-      systemPrompt: systemPrompt + SCORE_INSTRUCTION,
+      systemPrompt: systemPrompt + SCORE_INSTRUCTION + ITEM_MARKER_INSTRUCTION,
       documents,
       images
     });
 
     console.log(`[handler] ШАГ 4: ответ LLM получен (${rawLlmResult.length} символов)`);
 
-    const { score: llmScore, cleanText: llmResult } = extractScore(rawLlmResult);
+    const { score: llmScore, cleanText: scoredText } = extractScore(rawLlmResult);
+    const { formattedText: llmResult, issues } = applySeverityMarkers(scoredText);
+    const llmIssues = issues.length > 0 ? issues.join('\n') : '✅ Ошибок и замечаний не обнаружено';
+    console.log(`[handler] Найдено пунктов с замечаниями/ошибками: ${issues.length}`);
 
     // ════════════════════════════════════════════════════
     // ШАГ 5: Выводим результат
@@ -344,7 +381,8 @@ async function process(body) {
       llm_result: llmResult,
       llm_status: 'success',
       llm_error_message: '',
-      llm_score: llmScore
+      llm_score: llmScore,
+      llm_issues: llmIssues
     };
 
     // Если нужно записать в переменную БП — добавляем с кастомным ключом
