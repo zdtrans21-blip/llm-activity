@@ -10,29 +10,6 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 const APP_URL = process.env.APP_URL || 'https://app-09458486e73d.vibecode.bitrix24.tech';
 
-// Кольцевой буфер последних логов — доступен через GET /debug/logs
-const LOG_BUFFER = [];
-const LOG_BUFFER_MAX = 300;
-function pushLog(line) {
-  LOG_BUFFER.push(`[${new Date().toISOString()}] ${line}`);
-  if (LOG_BUFFER.length > LOG_BUFFER_MAX) LOG_BUFFER.shift();
-}
-const origLog = console.log.bind(console);
-const origError = console.error.bind(console);
-console.log = (...args) => { pushLog(args.join(' ')); origLog(...args); };
-console.error = (...args) => { pushLog('ERROR: ' + args.join(' ')); origError(...args); };
-
-// Лог каждого входящего запроса
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
-  next();
-});
-
-// ─── Просмотр логов без exec/docker ───────────────────────────
-app.get('/debug/logs', (req, res) => {
-  res.type('text/plain').send(LOG_BUFFER.join('\n') || '(пусто)');
-});
-
 // ─── Healthcheck ─────────────────────────────────────────────
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'llm-activity', timestamp: new Date().toISOString() });
@@ -50,7 +27,7 @@ app.get('/', (req, res) => {
   <li>Handler: <code>${APP_URL}/handler</code></li>
   <li>Status: <strong style="color:green">OK</strong></li>
 </ul>
-<p><small>Для регистрации активити перейдите на <a href="/install">/install</a></small></p>
+<p><small>Регистрация активити происходит автоматически при установке/переустановке приложения в Битрикс24.</small></p>
 </body></html>`);
 });
 
@@ -87,45 +64,6 @@ app.post('/install', async (req, res) => {
   } catch (err) {
     console.error('[onAppInstall] ❌ Ошибка регистрации:', err.message);
     if (err.response) console.error('   Ответ:', JSON.stringify(err.response.data));
-  }
-});
-
-// ─── Ручная установка через GET (для отладки) ────────────────
-// Используется когда нужно перерегистрировать активити вручную
-// Требует передать ?token=ACCESS_TOKEN
-app.get('/install', async (req, res) => {
-  const token = req.query.token;
-  const endpoint = req.query.endpoint;
-
-  if (!token) {
-    return res.send(`<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Установка активити</title></head>
-<body style="font-family:sans-serif;padding:32px;max-width:600px">
-<h2>Ручная установка активити</h2>
-<p>Передайте Битрикс24 access_token как параметр:</p>
-<code>/install?token=ВАШ_ACCESS_TOKEN&amp;endpoint=https://aslz.bitrix24.ru/rest/</code>
-<p>Токен можно получить из любого Битрикс24 webhook или через REST API.</p>
-</body></html>`);
-  }
-
-  try {
-    const install = require('./install');
-    const result = await install.registerActivity(token, endpoint);
-    res.send(`<!DOCTYPE html>
-<html><head><meta charset="UTF-8"></head>
-<body style="font-family:sans-serif;padding:32px;max-width:600px">
-<h2>✅ Активити зарегистрировано!</h2>
-<p>Откройте Битрикс24 → Бизнес-процессы → Конструктор → <b>"Действия приложений"</b></p>
-<p>Там появится: <b>🤖 LLM: анализ документов</b></p>
-<pre style="background:#f5f5f5;padding:12px;border-radius:6px;font-size:12px">${JSON.stringify(result, null, 2)}</pre>
-</body></html>`);
-  } catch (err) {
-    res.status(500).send(`<!DOCTYPE html>
-<html><head><meta charset="UTF-8"></head>
-<body style="font-family:sans-serif;padding:32px;max-width:600px">
-<h2>❌ Ошибка</h2><p>${err.message}</p>
-<pre style="background:#fff0f0;padding:12px;border-radius:6px;font-size:12px">${JSON.stringify(err.response?.data || {}, null, 2)}</pre>
-</body></html>`);
   }
 });
 

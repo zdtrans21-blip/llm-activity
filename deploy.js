@@ -12,8 +12,13 @@ const axios = require('axios');
 
 require('dotenv').config();
 
-const VIBE_API_KEY = process.env.VIBE_API_KEY || 'vibe_app_local_6a3980a57f9e21_62538899_xfI14B1H3vBDPgDCx4XAu9C27F0y5JYDBTLlaYtyhSKTkwb6Qe_5646dd';
+const VIBE_API_KEY = process.env.VIBE_API_KEY;
 const BITRIX_DOMAIN = process.env.BITRIX_DOMAIN || 'aslz.bitrix24.ru';
+
+if (!VIBE_API_KEY) {
+  console.error('❌ Переменная окружения VIBE_API_KEY не задана. Скопируйте .env.example в .env и заполните её.');
+  process.exit(1);
+}
 const BASE_URL = 'https://vibecode.bitrix24.tech';
 
 const headers = {
@@ -155,19 +160,11 @@ async function deploy() {
   console.log(`   Health:  ${appUrl}/health`);
   console.log('════════════════════════════════════════\n');
 
-  // 5. Регистрируем активити
-  console.log('📋 Регистрирую активити в Битрикс24...');
-  process.env.APP_URL = appUrl;
-
-  try {
-    const installResp = await axios.get(`${appUrl}/install`, { timeout: 30000 });
-    console.log('   Результат:', JSON.stringify(installResp.data).substring(0, 300));
-    console.log('\n🎉 Готово! Откройте Битрикс24 → Бизнес-процессы → Конструктор');
-    console.log('   Активити появится в разделе "Действия приложений"');
-  } catch (installErr) {
-    console.warn(`   ⚠️  Автоматическая установка не удалась: ${installErr.message}`);
-    console.warn(`   Запустите вручную: APP_URL=${appUrl} node install.js`);
-  }
+  // Регистрация активити происходит только через onAppInstall (POST /install,
+  // который шлёт сам Битрикс24 при установке/переустановке локального
+  // приложения) — деплой кода её не запускает и не должен запускать.
+  console.log('ℹ️  Регистрация активити не требуется при обычном деплое — она уже сделана');
+  console.log('   и обновляется автоматически при переустановке приложения в Битрикс24.');
 
   // Чистим архив
   try { fs.unlinkSync(archivePath); } catch { /* ignored */ }
